@@ -1,0 +1,141 @@
+---
+title: 'Assignment 1: Adult Income Analysis'
+author: "Nusrat Nasir Nimnee"
+date: "2025-09-05"
+output:
+  html_document:
+    toc: true
+    theme: united
+  pdf_document:
+    toc: true
+  word_document:
+    toc: true
+---
+
+# Introduction
+
+This report analyzes the 'Adult Income' dataset to explore the factors that influence whether an individual earns over $50K a year.
+
+```{r setup, include=FALSE}
+# This chunk is for global setup options.
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Data Loading and Preparation
+This dataset collected from kaggle dataset. 
+Dataset Source: https://www.kaggle.com/datasets/serpilturanyksel/adult-income
+
+```{r environment-setup}
+# Clear the global environment
+rm(list = ls())
+
+# Load required packages
+# install.packages("gtsummary") 
+# install.packages("tidyverse")
+library(tidyverse)
+library(gtsummary)
+```
+
+```{r load-data}
+# Load the dataset
+# The dataset is expected to be in the same directory as this Rmd file.
+Income_df <- read.csv("adult_income_data.csv")
+```
+
+# Exploratory Data Analysis
+
+## Basic Summary
+
+Here is a basic summary of the dataset.
+
+```{r summary-base}
+str(Income_df)
+summary(Income_df)
+```
+
+## Detailed Summary Table
+
+A more detailed and formatted summary using the `gtsummary` package, comparing income levels.
+
+```{r summary-gtsummary}
+Income_df %>%
+  tbl_summary(by = salary) %>%
+  add_p() %>%
+  add_overall() %>%
+  bold_labels()
+```
+
+
+
+# Data Transformation
+
+Before visualization, let's transform at least one variable as required. We'll create a log transformation of hours per week to normalize the distribution.
+
+```{r transform-data}
+# Transform hours.per.week using log transformation
+# Adding 1 to avoid log(0) issues
+Income_df$log_hours_per_week <- log(Income_df$hours.per.week + 1)
+
+# Show summary of original and transformed variable
+cat("Original hours.per.week summary:\n")
+summary(Income_df$hours.per.week)
+cat("Log-transformed hours.per.week summary:\n")
+summary(Income_df$log_hours_per_week)
+```
+
+# Data Visualization
+
+Visualizing the data helps in understanding the relationships between different variables and the income level.
+
+## Quantitative Variable Plot
+
+```{r plot-quantitative}
+# Plot of a quantitative variable: Age distribution
+ggplot(Income_df, aes(x = age)) +
+  geom_histogram(bins = 20, fill = "lightblue", color = "black", alpha = 0.7) +
+  labs(title = "Distribution of Age", 
+       x = "Age", 
+       y = "Frequency") +
+  theme_minimal()
+```
+
+## Scatterplot
+
+```{r scatterplot}
+# Scatterplot: Age vs Hours per week
+ggplot(Income_df, aes(x = age, y = hours.per.week, color = salary)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Scatterplot: Age vs Hours per Week by Salary", 
+       x = "Age", 
+       y = "Hours per Week",
+       color = "Salary") +
+  theme_minimal()
+```
+
+## Additional Visualizations
+
+```{r visualize-income}
+# Distribution of Income
+ggplot(Income_df, aes(x = salary)) +
+  geom_bar(fill = "skyblue") +
+  labs(title = "Distribution of Income Levels", x = "Salary", y = "Count") +
+  theme_minimal()
+```
+
+```{r visualize-transformed}
+# Comparison of original vs transformed variable
+par(mfrow = c(1, 2))
+hist(Income_df$hours.per.week, main = "Original Hours per Week", xlab = "Hours per Week")
+hist(Income_df$log_hours_per_week, main = "Log-transformed Hours per Week", xlab = "Log(Hours per Week + 1)")
+```
+
+# Conclusion
+
+This report presents an exploratory data analysis of the adult income dataset. After loading data, several key insights were gathered through summary statistics and visualizations.
+
+The analysis revealed the distribution of individuals earning above and below $50K. Visualizations of age, workclass, and other demographic factors against income level have highlighted potential predictors for higher income, such as age and type of employment. For instance, the proportion of individuals earning over $50K varies significantly across different workclasses.
+
+These initial findings provide a solid foundation for understanding the dataset's characteristics and can inform future predictive modeling tasks.
+
+
+
