@@ -1,0 +1,160 @@
+---
+title: "Assignment 2: Predicting Personal Loan Acceptance using k-NN"
+author: "Nusrat Nasir Nimnee"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+```
+
+## Data Loading and Exploration
+
+```{r load_data}
+data <- read.csv("UniversalBank.csv")
+str(data)
+head(data)
+summary(data)
+```
+
+## Data Preprocessing
+
+```{r preprocess}
+data$Personal.Loan <- as.factor(data$Personal.Loan)
+data$Education <- as.factor(data$Education)
+# Check for missing values
+sum(is.na(data))
+# Remove ID and ZIP Code as per instructions
+data <- data %>% select(-ID, -ZIP.Code)
+```
+
+## Exploratory Data Analysis
+
+```{r eda}
+# Distribution of Personal Loan
+ggplot(data, aes(x = Personal.Loan)) + 
+  geom_bar(fill = "blue") + 
+  labs(title = "Distribution of Personal Loan Acceptance")
+
+# Summary of numeric variables
+numeric_vars <- data %>% select_if(is.numeric)
+summary(numeric_vars)
+```
+
+## Partition Data into Training (60%) and Validation (40%)
+
+```{r partition}
+set.seed(123)
+trainIndex <- createDataPartition(data$Personal.Loan, p = 0.6, list = FALSE)
+train <- data[trainIndex, ]
+validation <- data[-trainIndex, ]
+```
+
+## k-NN Classification with k=1
+
+```{r knn_k1}
+set.seed(123)
+# Train k-NN with k=1
+model_k1 <- train(Personal.Loan ~ ., data = train, method = "knn", 
+                  preProcess = c("center", "scale"), 
+                  tuneGrid = data.frame(k = 1))
+print(model_k1)
+```
+
+## Classify the Specific Customer with k=1
+
+```{r classify_customer_k1}
+# Customer data
+customer <- data.frame(
+  Age = 40,
+  Experience = 10,
+  Income = 84,
+  Family = 2,
+  CCAvg = 2,
+  Education = factor(2, levels = levels(data$Education)),  # Since Education_2=1
+  Mortgage = 0,
+  Securities.Account = 0,
+  CD.Account = 0,
+  Online = 1,
+  CreditCard = 1
+)
+
+# Predict
+pred_customer_k1 <- predict(model_k1, customer)
+print(pred_customer_k1)
+```
+
+## Choosing the Best k
+
+```{r best_k}
+set.seed(123)
+# Train k-NN with different k values
+model_best <- train(Personal.Loan ~ ., data = train, method = "knn", 
+                    preProcess = c("center", "scale"), 
+                    tuneLength = 10)
+print(model_best)
+best_k <- model_best$bestTune$k
+print(paste("Best k:", best_k))
+```
+
+## Confusion Matrix for Validation with Best k
+
+```{r conf_matrix_best}
+pred_val <- predict(model_best, validation)
+conf_matrix <- confusionMatrix(pred_val, validation$Personal.Loan)
+print(conf_matrix)
+```
+
+## Classify the Customer with Best k
+
+```{r classify_customer_best}
+pred_customer_best <- predict(model_best, customer)
+print(pred_customer_best)
+```
+
+## Repartition into Training (50%), Validation (30%), Test (20%)
+
+```{r repartition}
+set.seed(123)
+trainIndex2 <- createDataPartition(data$Personal.Loan, p = 0.5, list = FALSE)
+train2 <- data[trainIndex2, ]
+remaining <- data[-trainIndex2, ]
+valIndex <- createDataPartition(remaining$Personal.Loan, p = 0.6, list = FALSE)  # 30% of total
+validation2 <- remaining[valIndex, ]
+test <- remaining[-valIndex, ]
+```
+
+## Apply k-NN with Best k on New Partition
+
+```{r knn_new_partition}
+set.seed(123)
+model_new <- train(Personal.Loan ~ ., data = train2, method = "knn", 
+                   preProcess = c("center", "scale"), 
+                   tuneGrid = data.frame(k = best_k))
+
+# Predictions
+pred_train <- predict(model_new, train2)
+pred_val2 <- predict(model_new, validation2)
+pred_test <- predict(model_new, test)
+
+# Confusion Matrices
+conf_train <- confusionMatrix(pred_train, train2$Personal.Loan)
+conf_val <- confusionMatrix(pred_val2, validation2$Personal.Loan)
+conf_test <- confusionMatrix(pred_test, test$Personal.Loan)
+
+print("Training Confusion Matrix:")
+print(conf_train)
+print("Validation Confusion Matrix:")
+print(conf_val)
+print("Test Confusion Matrix:")
+print(conf_test)
+```
+
+## Comments on Differences
+
+The confusion matrices reveal that the training set typically shows higher accuracy due to the model fitting closely to the training data, which can indicate some overfitting. The validation and test sets, being unseen data, show slightly lower but more realistic performance metrics. The similarity between validation and test accuracies suggests good generalization of the model. Differences between sets are primarily due to random partitioning and the inherent variability in the data. The chosen k balances between underfitting (too high k, ignoring patterns) and overfitting (too low k, too sensitive to noise).
