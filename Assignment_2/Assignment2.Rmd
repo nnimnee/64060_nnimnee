@@ -1,0 +1,212 @@
+---
+title: "Assignment 2: Predicting Personal Loan Acceptance using k-NN"
+author: "Nusrat Nasir Nimnee"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+```
+
+## Data Loading and Exploration
+
+```{r load_data}
+data <- read.csv("UniversalBank.csv")
+str(data)
+head(data)
+summary(data)
+```
+
+## Data Preprocessing
+
+```{r preprocess}
+data$Personal.Loan <- as.factor(data$Personal.Loan)
+data$Education <- as.factor(data$Education)
+# Check for missing values
+sum(is.na(data))
+# Remove ID and ZIP Code as per instructions
+data <- data %>% select(-ID, -ZIP.Code)
+
+# Create dummy variables for Education manually
+data$Education_1 <- ifelse(data$Education == 1, 1, 0)
+data$Education_2 <- ifelse(data$Education == 2, 1, 0)
+data$Education_3 <- ifelse(data$Education == 3, 1, 0)
+
+# Remove the original Education variable
+data <- data %>% select(-Education)
+
+# Verify the dummy variables
+cat("Dummy variables created successfully:\n")
+cat("Education_1 :", sum(data$Education_1), "customers\n")
+cat("Education_2 :", sum(data$Education_2), "customers\n") 
+cat("Education_3 :", sum(data$Education_3), "customers\n")
+```
+
+## Partition Data into Training (60%) and Validation (40%)
+
+```{r partition}
+set.seed(123)
+trainIndex <- createDataPartition(data$Personal.Loan, p = 0.6, list = FALSE)
+train <- data[trainIndex, ]
+validation <- data[-trainIndex, ]
+```
+
+## k-NN Classification with k=1
+
+```{r knn_k1}
+set.seed(123)
+# Train k-NN with k=1
+model_k1 <- train(Personal.Loan ~ ., data = train, method = "knn", 
+                  preProcess = c("center", "scale"), 
+                  tuneGrid = data.frame(k = 1))
+print(model_k1)
+```
+
+## Classify the Specific Customer with k=1
+
+```{r classify_customer_k1}
+# Customer data with dummy variables as specified in assignment:
+# Age = 40, Experience = 10, Income = 84, Family = 2, CCAvg = 2, 
+# Education_1 = 0, Education_2 = 1, Education_3 = 0, Mortgage = 0, 
+# Securities Account = 0, CD Account = 0, Online = 1, Credit Card = 1
+customer <- data.frame(
+  Age = 40,
+  Experience = 10,
+  Income = 84,
+  Family = 2,
+  CCAvg = 2,
+  Education_1 = 0,  
+  Education_2 = 1, 
+  Education_3 = 0, 
+  Mortgage = 0,
+  Securities.Account = 0,
+  CD.Account = 0,
+  Online = 1,
+  CreditCard = 1
+)
+
+# Predict
+pred_customer_k1 <- predict(model_k1, customer)
+cat("Customer classification with k=1:", as.character(pred_customer_k1))
+if(pred_customer_k1 == 1) {
+  cat("\nPrediction: Customer will ACCEPT the personal loan offer")
+} else {
+  cat("\nPrediction: Customer will REJECT the personal loan offer")
+}
+```
+
+## Choosing the Best k
+
+```{r best_k}
+set.seed(123)
+# Train k-NN with k values from 1 to 20 for comprehensive evaluation
+# Using cross-validation to find truly optimal k (not just training accuracy)
+model_best <- train(Personal.Loan ~ ., data = train, method = "knn", 
+                    preProcess = c("center", "scale"), 
+                    tuneGrid = data.frame(k = 1:20),
+                    trControl = trainControl(method = "cv", number = 5))
+print(model_best)
+best_k <- model_best$bestTune$k
+cat("Best k:", best_k, "\n")
+cat("Best cross-validated accuracy:", round(max(model_best$results$Accuracy), 4), "\n")
+
+# Create a comprehensive plot to visualize k selection
+library(ggplot2)
+results_df <- model_best$results
+
+ggplot(results_df, aes(x = k)) + 
+  geom_line(aes(y = Accuracy, color = "CV Accuracy"), size = 1.2) +
+  geom_point(aes(y = Accuracy, color = "CV Accuracy"), size = 3) +
+  geom_line(aes(y = Kappa, color = "Kappa"), size = 1.2) +
+  geom_point(aes(y = Kappa, color = "Kappa"), size = 3) +
+  geom_vline(xintercept = best_k, linetype = "dashed", color = "red", size = 1) +
+  annotate("text", x = best_k + 1, y = max(results_df$Accuracy) - 0.02, 
+           label = paste("Best k =", best_k), color = "red", size = 4) +
+  labs(title = "k-NN Model Performance: Finding Optimal k (5-Fold CV)",
+       subtitle = "Cross-validation prevents overfitting and finds truly optimal k",
+       x = "Number of Neighbors (k)", 
+       y = "Performance Metric",
+       color = "Metric") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12)) +
+  scale_x_continuous(breaks = 1:20)
+
+# Show detailed comparison
+cat("\nDetailed k comparison:\n")
+print(results_df[, c("k", "Accuracy", "Kappa")])
+```
+
+## Confusion Matrix for Validation with Best k
+
+```{r conf_matrix_best}
+pred_val <- predict(model_best, validation)
+conf_matrix <- confusionMatrix(pred_val, validation$Personal.Loan)
+print(conf_matrix)
+```
+
+## Classify the Customer with Best k
+
+```{r classify_customer_best}
+# Same customer data with optimal k
+pred_customer_best <- predict(model_best, customer)
+cat("Customer classification with best k (k =", best_k, "):", as.character(pred_customer_best))
+if(pred_customer_best == 1) {
+  cat("\nPrediction: Customer will ACCEPT the personal loan offer")
+} else {
+  cat("\nPrediction: Customer will REJECT the personal loan offer")
+}
+```
+
+## Repartition into Training (50%), Validation (30%), Test (20%)
+
+```{r repartition}
+set.seed(123)
+trainIndex2 <- createDataPartition(data$Personal.Loan, p = 0.5, list = FALSE)
+train2 <- data[trainIndex2, ]
+remaining <- data[-trainIndex2, ]
+valIndex <- createDataPartition(remaining$Personal.Loan, p = 0.6, list = FALSE)  # 30% of total
+validation2 <- remaining[valIndex, ]
+test <- remaining[-valIndex, ]
+```
+
+## Apply k-NN with Best k on New Partition
+
+```{r knn_new_partition}
+set.seed(123)
+model_new <- train(Personal.Loan ~ ., data = train2, method = "knn", 
+                   preProcess = c("center", "scale"), 
+                   tuneGrid = data.frame(k = best_k))
+
+# Predictions
+pred_train <- predict(model_new, train2)
+pred_val2 <- predict(model_new, validation2)
+pred_test <- predict(model_new, test)
+
+# Confusion Matrices
+conf_train <- confusionMatrix(pred_train, train2$Personal.Loan)
+conf_val <- confusionMatrix(pred_val2, validation2$Personal.Loan)
+conf_test <- confusionMatrix(pred_test, test$Personal.Loan)
+
+print("Training Confusion Matrix:")
+print(conf_train)
+print("Validation Confusion Matrix:")
+print(conf_val)
+print("Test Confusion Matrix:")
+print(conf_test)
+```
+
+## Comments on Differences
+
+The confusion matrices show different performance across the three datasets. The training set has the highest accuracy (97.48%) because the model was trained on this data. The validation and test sets show similar accuracy (96.60% each), which is good for model generalization.
+
+The training set shows some overfitting with higher Kappa value (0.8369) compared to validation (0.7787) and test (0.7698). However, the difference is not very large, suggesting the chosen k-value works well.
+
+All datasets show high sensitivity (>99%) for identifying customers who will not accept loans. However, specificity is lower (65-75%), meaning the model has difficulty identifying customers who will accept loans. This happens because most customers (90.4%) do not accept loans, creating class imbalance.
+
+The similar performance between validation and test sets indicates good model stability. The model generalizes well to new data without significant overfitting. The chosen k balances between overfitting (low k) and underfitting (high k), providing reasonable performance for loan prediction.
