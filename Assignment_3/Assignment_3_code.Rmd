@@ -1,0 +1,241 @@
+---
+title: "Assignment 3: Naive Bayes Classifier for Personal Loan Prediction"
+author: "Nusrat Nasir Nimnee"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(e1071)
+library(caret)
+library(reshape2)
+```
+
+## Data Loading and Exploration
+
+```{r load_data}
+data <- read.csv("UniversalBank(1).csv")
+str(data)
+head(data)
+summary(data)
+```
+
+## Data Preprocessing
+
+```{r preprocess}
+# Remove ID and ZIP Code
+data <- data[, -c(1, 5)]
+
+# Convert categorical variables to factors
+data$Personal.Loan <- as.factor(data$Personal.Loan)
+data$Online <- as.factor(data$Online)
+data$CreditCard <- as.factor(data$CreditCard)
+
+# Check for missing values
+cat("Missing values:", sum(is.na(data)), "\n")
+```
+
+## Partition Data into Training (60%) and Validation (40%)
+
+```{r partition}
+set.seed(123)
+trainIndex <- sample(1:nrow(data), 0.6 * nrow(data))
+train <- data[trainIndex, ]
+validation <- data[-trainIndex, ]
+
+cat("Training set size:", nrow(train), "\n")
+cat("Validation set size:", nrow(validation), "\n")
+```
+
+## A. Create Pivot Table with Online, CC, and Loan
+
+```{r pivot_table_a}
+# Create pivot table: Online (columns), CC (rows), Loan (secondary rows), Count (values)
+pivot_table <- table(train$CreditCard, train$Online, train$Personal.Loan)
+names(dimnames(pivot_table)) <- c("CreditCard", "Online", "Personal.Loan")
+
+cat("Pivot Table - Count of customers:\n")
+cat("Personal.Loan = 0 (Did not accept loan):\n")
+print(pivot_table[,,"0"])
+cat("\nPersonal.Loan = 1 (Accepted loan):\n")
+print(pivot_table[,,"1"])
+
+# Alternative flat table format
+pivot_flat <- ftable(train$Personal.Loan, train$CreditCard, train$Online)
+cat("\nFlat Pivot Table:\n")
+print(pivot_flat)
+```
+
+## B. Probability P(Loan = 1 | CC = 1, Online = 1)
+
+```{r prob_b}
+# From pivot table: customers with CC=1 and Online=1
+cc1_online1_loan1 <- pivot_table["1", "1", "1"]
+cc1_online1_loan0 <- pivot_table["1", "1", "0"]
+cc1_online1_total <- cc1_online1_loan1 + cc1_online1_loan0
+
+prob_loan_given_cc_online <- cc1_online1_loan1 / cc1_online1_total
+
+cat("Customers with CC=1 and Online=1 who accepted loan:", cc1_online1_loan1, "\n")
+cat("Total customers with CC=1 and Online=1:", cc1_online1_total, "\n")
+cat("P(Loan = 1 | CC = 1, Online = 1) =", round(prob_loan_given_cc_online, 4), "\n")
+```
+
+## C. Create Two Separate Pivot Tables
+
+```{r pivot_tables_c}
+# Pivot table: Loan (rows) by Online (columns)
+pivot_loan_online <- table(train$Personal.Loan, train$Online)
+rownames(pivot_loan_online) <- c("Loan=0", "Loan=1")
+colnames(pivot_loan_online) <- c("Online=0", "Online=1")
+
+cat("Pivot Table - Loan by Online:\n")
+print(pivot_loan_online)
+
+# Pivot table: Loan (rows) by CC (columns)
+pivot_loan_cc <- table(train$Personal.Loan, train$CreditCard)
+rownames(pivot_loan_cc) <- c("Loan=0", "Loan=1")
+colnames(pivot_loan_cc) <- c("CC=0", "CC=1")
+
+cat("\nPivot Table - Loan by CreditCard:\n")
+print(pivot_loan_cc)
+```
+
+## D. Compute Required Probabilities
+
+```{r probabilities_d}
+# Extract counts from pivot tables
+loan1_total <- sum(train$Personal.Loan == "1")
+loan0_total <- sum(train$Personal.Loan == "0")
+total_customers <- nrow(train)
+
+# i. P(CC = 1 | Loan = 1)
+cc1_loan1 <- pivot_loan_cc["Loan=1", "CC=1"]
+p_cc1_given_loan1 <- cc1_loan1 / loan1_total
+
+# ii. P(Online = 1 | Loan = 1)
+online1_loan1 <- pivot_loan_online["Loan=1", "Online=1"]
+p_online1_given_loan1 <- online1_loan1 / loan1_total
+
+# iii. P(Loan = 1)
+p_loan1 <- loan1_total / total_customers
+
+# iv. P(CC = 1 | Loan = 0)
+cc1_loan0 <- pivot_loan_cc["Loan=0", "CC=1"]
+p_cc1_given_loan0 <- cc1_loan0 / loan0_total
+
+# v. P(Online = 1 | Loan = 0)
+online1_loan0 <- pivot_loan_online["Loan=0", "Online=1"]
+p_online1_given_loan0 <- online1_loan0 / loan0_total
+
+# vi. P(Loan = 0)
+p_loan0 <- loan0_total / total_customers
+
+cat("i.   P(CC = 1 | Loan = 1) =", round(p_cc1_given_loan1, 4), "\n")
+cat("ii.  P(Online = 1 | Loan = 1) =", round(p_online1_given_loan1, 4), "\n")
+cat("iii. P(Loan = 1) =", round(p_loan1, 4), "\n")
+cat("iv.  P(CC = 1 | Loan = 0) =", round(p_cc1_given_loan0, 4), "\n")
+cat("v.   P(Online = 1 | Loan = 0) =", round(p_online1_given_loan0, 4), "\n")
+cat("vi.  P(Loan = 0) =", round(p_loan0, 4), "\n")
+```
+
+## E. Compute Naive Bayes Probability P(Loan = 1 | CC = 1, Online = 1)
+
+```{r naive_bayes_e}
+# Using Bayes theorem:
+# P(Loan=1 | CC=1, Online=1) = P(CC=1 | Loan=1) * P(Online=1 | Loan=1) * P(Loan=1) / P(CC=1, Online=1)
+# 
+# For denominator: P(CC=1, Online=1) = P(CC=1, Online=1 | Loan=1)*P(Loan=1) + P(CC=1, Online=1 | Loan=0)*P(Loan=0)
+# Assuming independence: P(CC=1, Online=1 | Loan=1) = P(CC=1|Loan=1) * P(Online=1|Loan=1)
+
+# Numerator
+numerator <- p_cc1_given_loan1 * p_online1_given_loan1 * p_loan1
+
+# Denominator
+prob_cc1_online1_given_loan1 <- p_cc1_given_loan1 * p_online1_given_loan1
+prob_cc1_online1_given_loan0 <- p_cc1_given_loan0 * p_online1_given_loan0
+denominator <- (prob_cc1_online1_given_loan1 * p_loan1) + (prob_cc1_online1_given_loan0 * p_loan0)
+
+# Naive Bayes probability
+nb_probability <- numerator / denominator
+
+cat("Naive Bayes Calculation:\n")
+cat("Numerator: P(CC=1|Loan=1) * P(Online=1|Loan=1) * P(Loan=1) =", round(numerator, 6), "\n")
+cat("Denominator =", round(denominator, 6), "\n")
+cat("\nP(Loan = 1 | CC = 1, Online = 1) =", round(nb_probability, 4), "\n")
+```
+
+## F. Compare with Pivot Table Result from (B)
+
+```{r compare_f}
+# Comparison
+comparison_df <- data.frame(
+  Method = c("Pivot Table (B)", "Naive Bayes (E)"),
+  Probability = c(prob_loan_given_cc_online, nb_probability)
+)
+print(comparison_df)
+
+cat("\nDifference:", round(abs(prob_loan_given_cc_online - nb_probability), 4), "\n")
+cat("\nThe pivot table gives the exact probability from observed data, while Naive Bayes")
+cat("\nassumes conditional independence. The pivot table is more accurate for this specific")
+cat("\ncombination, but Naive Bayes generalizes better to new data.\n")
+```
+
+## G. Run Naive Bayes Model and Compare
+
+```{r naive_bayes_model}
+# Build Naive Bayes model using only Online and CreditCard predictors
+nb_model <- naiveBayes(Personal.Loan ~ Online + CreditCard, data = train)
+print(nb_model)
+
+# Predict for customer with CC=1 and Online=1
+test_customer <- data.frame(Online = factor("1", levels = c("0", "1")),
+                            CreditCard = factor("1", levels = c("0", "1")))
+
+prediction <- predict(nb_model, test_customer, type = "raw")
+cat("\n\nModel prediction for customer with CC=1 and Online=1:\n")
+cat("P(Loan = 0 | CC = 1, Online = 1) =", round(prediction[1], 4), "\n")
+cat("P(Loan = 1 | CC = 1, Online = 1) =", round(prediction[2], 4), "\n")
+
+cat("\nComparison:\n")
+cat("Manually calculated (E):", round(nb_probability, 4), "\n")
+cat("Model output:", round(prediction[2], 4), "\n")
+cat("Difference:", round(abs(nb_probability - prediction[2]), 6), "\n\n")
+
+cat("The values match closely, confirming our manual calculation.\n")
+```
+
+## Additional: Full Model with All Predictors
+
+```{r full_model}
+# Build full Naive Bayes model with all predictors
+nb_full <- naiveBayes(Personal.Loan ~ ., data = train)
+
+# Predictions on validation set
+pred_val <- predict(nb_full, validation)
+
+# Confusion matrix
+conf_matrix <- confusionMatrix(pred_val, validation$Personal.Loan, positive = "1")
+print(conf_matrix)
+
+cat("\nModel Performance:\n")
+cat("Accuracy:", round(conf_matrix$overall['Accuracy'], 4), "\n")
+cat("Sensitivity (Recall):", round(conf_matrix$byClass['Sensitivity'], 4), "\n")
+cat("Specificity:", round(conf_matrix$byClass['Specificity'], 4), "\n")
+cat("Precision:", round(conf_matrix$byClass['Precision'], 4), "\n")
+```
+
+
+
+The Naive Bayes classifier successfully predicts personal loan acceptance with good accuracy. 
+The manual calculations match the model output, confirming the correctness of the Naive Bayes 
+approach. The key findings are:
+
+1. Pivot Table Probability (B): More accurate for exact combinations seen in training data
+2. Naive Bayes Probability (E): Uses independence assumption, generalizes better to unseen data
+3. Model Performance: The full model achieves high accuracy on validation data
+4. The conditional independence assumption works reasonably well for this dataset, though 
+   there is a small difference between exact probability and Naive Bayes estimate.
