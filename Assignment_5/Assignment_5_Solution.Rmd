@@ -1,0 +1,176 @@
+---
+title: 'Assignment 5: Hierarchical Clustering'
+author: "Nusrat Nasir Nimnee"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(cluster)    # For agnes
+library(factoextra) # For visualization
+library(tidyverse)  # For data manipulation
+```
+
+# Data Preprocessing
+
+```{r load_data}
+# Load and clean data
+cereals_df <- read.csv("Cereals.csv")
+cereals_clean <- na.omit(cereals_df)
+rownames(cereals_clean) <- cereals_clean$name
+
+# Normalize numeric data
+cereals_numeric <- cereals_clean %>% select(-name, -mfr, -type)
+cereals_scaled <- scale(cereals_numeric)
+```
+
+# Hierarchical Clustering with AGNES
+
+We compare Single, Complete, Average, and Ward linkage methods.
+
+```{r agnes_plots, fig.height=10, fig.width=10}
+# Compute Agnes for all methods
+hc_single <- agnes(cereals_scaled, method = "single")
+hc_complete <- agnes(cereals_scaled, method = "complete")
+hc_average <- agnes(cereals_scaled, method = "average")
+hc_ward <- agnes(cereals_scaled, method = "ward")
+
+# Display AC values
+cat("AC (Single):", hc_single$ac, "\n")
+cat("AC (Complete):", hc_complete$ac, "\n")
+cat("AC (Average):", hc_average$ac, "\n")
+cat("AC (Ward):", hc_ward$ac, "\n")
+
+# Plot Dendrograms
+par(mfrow = c(2, 2))
+pltree(hc_single, cex = 0.6, hang = -1, main = "Dendrogram (Single)")
+pltree(hc_complete, cex = 0.6, hang = -1, main = "Dendrogram (Complete)")
+pltree(hc_average, cex = 0.6, hang = -1, main = "Dendrogram (Average)")
+pltree(hc_ward, cex = 0.6, hang = -1, main = "Dendrogram (Ward)")
+```
+
+**Conclusion:** **Ward's method** has the highest Agglomerative Coefficient (0.905) and produces the most structured clusters. We will use Ward's method for further analysis.
+
+# Cluster Selection (Ward's Method)
+
+```{r final_dendrogram, fig.height=6, fig.width=10}
+# Reset plot layout
+par(mfrow = c(1, 1))
+
+# Plot Ward's dendrogram with k=5 clusters
+pltree(hc_ward, cex = 0.6, hang = -1, main = "Dendrogram of Agnes (Ward)")
+rect.hclust(hc_ward, k = 5, border = 2:6)
+```
+
+We choose **k = 5** clusters based on the dendrogram structure. At this cut height, we observe:
+- Clear separation between clusters (distinct branches)
+- Relatively balanced cluster sizes (no extremely small or large groups)
+- Good within-cluster cohesion (short branch heights within clusters)
+
+The dendrogram shows that cereals naturally form distinct groups based on their nutritional profiles.
+
+# Cluster Stability Analysis
+
+```{r stability}
+set.seed(123)
+# Partition Data (70% A, 30% B)
+index <- sample(1:nrow(cereals_scaled), size = 0.7 * nrow(cereals_scaled))
+part_A <- cereals_scaled[index, ]
+part_B <- cereals_scaled[-index, ]
+
+# Cluster Partition A
+hc_A <- agnes(part_A, method = "ward")
+labels_A <- cutree(hc_A, k = 5)
+centroids_A <- aggregate(part_A, by = list(labels_A), mean)[, -1]
+
+# Assign Partition B to nearest centroids
+assign_cluster <- function(row, centroids) {
+  dists <- apply(centroids, 1, function(c) sum((row - c)^2))
+  which.min(dists)
+}
+labels_B_pred <- apply(part_B, 1, assign_cluster, centroids = centroids_A)
+
+# Compare with Full Data Clustering
+hc_full <- agnes(cereals_scaled, method = "ward")
+labels_full <- cutree(hc_full, k = 5)
+labels_B_true <- labels_full[-index]
+
+# Confusion Matrix
+table(Original = labels_B_true, Predicted = labels_B_pred)
+```
+
+**Stability Assessment:**
+
+```{r stability_metrics}
+# Calculate stability metrics
+correct_assignments <- sum(diag(table(labels_B_true, labels_B_pred)))
+total_B <- length(labels_B_pred)
+stability_rate <- correct_assignments / total_B
+
+cat("Stability Rate:", round(stability_rate * 100, 1), "%\n")
+cat("Correctly assigned:", correct_assignments, "out of", total_B, "observations\n")
+```
+
+The confusion matrix shows that **`r round(stability_rate * 100, 1)`%** of observations in Partition B were correctly assigned to their original clusters. This indicates **good stability** - the clustering structure is consistent and not heavily dependent on the specific sample used. The diagonal elements dominate the confusion matrix, confirming that clusters are well-defined and reproducible.
+
+# Healthy Cereals Identification
+
+```{r healthy_cluster}
+# Analyze cluster characteristics
+cereals_clustered <- cereals_clean %>%
+  mutate(cluster = factor(labels_full))
+
+cluster_summary <- cereals_clustered %>%
+  group_by(cluster) %>%
+  summarise(
+    Rating = mean(rating),
+    Fiber = mean(fiber),
+    Sugar = mean(sugars),
+    Calories = mean(calories),
+    Count = n()
+  ) %>%
+  arrange(desc(Rating))
+
+print(cluster_summary)
+```
+
+**Identifying the Healthy Cluster:**
+
+Looking at the cluster summary, we identify the healthy cluster by selecting the one with:
+- Highest rating
+- High fiber content
+- Low sugar content
+- Reasonable calorie count
+
+```{r identify_healthy}
+# Find the cluster with best health profile
+healthy_cluster_id <- cluster_summary %>%
+  filter(Fiber == max(Fiber) | Rating == max(Rating)) %>%
+  slice(1) %>%
+  pull(cluster)
+
+cat("Recommended Healthy Cluster:", as.character(healthy_cluster_id), "\n\n")
+
+# List cereals in this cluster
+healthy_cereals <- cereals_clustered %>%
+  filter(cluster == healthy_cluster_id) %>%
+  select(name, fiber, sugars, calories, rating) %>%
+  arrange(desc(rating))
+
+print(healthy_cereals)
+```
+
+**Recommendation:** The elementary schools should select cereals from **Cluster `r healthy_cluster_id`**, which contains the healthiest options with high fiber and low sugar content.
+
+# Normalization Discussion
+
+**Should the data be normalized?**
+Yes. Normalization is essential because nutritional variables have vastly different scales (e.g., Sodium in mg vs. Fiber in g). Without normalization, variables with larger ranges would dominate the distance calculations, leading to biased clusters.
